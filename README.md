@@ -69,7 +69,7 @@ gh workflow run build.yml --ref main -f force=true -f release=true
 The log has one file per day (the last 7 are kept) in the app's private storage. It records the device
 model and Android build, process starts and crashes, the lifecycle and every intent the launcher
 receives, the navigation mode and gesture insets, where touches start near the bottom edge, the
-Home-press decisions, and every step of the swipe-home animation with timings. It contains the package
+Home-press decisions, every step of the swipe-home animation with timings, memory pressure, and home screen icons that take longer than 120 ms to load. It contains the package
 name of the app you swipe home from and no other app data, text or screen content.
 
 ## Layout

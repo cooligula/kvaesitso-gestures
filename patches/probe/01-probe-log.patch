@@ -47,23 +47,24 @@ index b871503..b39ba0e 100644
          }
      }
 diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
-index 8f8392b..afbc7b7 100644
+index 8f8392b..f050e64 100644
 --- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
 +++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
-@@ -34,7 +34,12 @@ import androidx.compose.ui.graphics.graphicsLayer
+@@ -34,7 +34,13 @@ import androidx.compose.ui.graphics.graphicsLayer
  import androidx.compose.ui.unit.IntOffset
  import androidx.compose.ui.unit.dp
  import androidx.core.view.WindowCompat
 +import androidx.core.view.ViewCompat
 +import androidx.core.view.WindowInsetsCompat
  import androidx.core.view.WindowInsetsControllerCompat
++import android.app.ActivityManager
 +import android.provider.Settings
 +import com.android.launcher3.GestureNavContract
 +import de.mm20.launcher2.ui.probe.ProbeLog
  import androidx.lifecycle.Lifecycle
  import androidx.lifecycle.flowWithLifecycle
  import de.mm20.launcher2.ktx.isAtLeastApiLevel
-@@ -100,6 +105,8 @@ abstract class SharedLauncherActivity(
+@@ -100,6 +106,8 @@ abstract class SharedLauncherActivity(
              window.isStatusBarContrastEnforced = false
          }
          super.onCreate(savedInstanceState)
@@ -72,7 +73,27 @@ index 8f8392b..afbc7b7 100644
  
          if (savedInstanceState != null) {
              pauseOnHome = savedInstanceState.getBoolean("pauseOnHome")
-@@ -490,11 +497,63 @@ abstract class SharedLauncherActivity(
+@@ -206,10 +214,15 @@ abstract class SharedLauncherActivity(
+                                     if (it != null) {
+                                         enterTransitionProgress.value = 0f
+                                         enterTransition = it
+-                                        enterTransitionProgress.animateTo(
+-                                            100f,
+-                                            animationSpec = animMotionSpec
+-                                        )
++                                        ProbeLog.log("enter", "animation start surface=${it.onIconSnapshot != null} bounds=${it.targetBounds}")
++                                        try {
++                                            enterTransitionProgress.animateTo(
++                                                100f,
++                                                animationSpec = animMotionSpec
++                                            )
++                                        } finally {
++                                            ProbeLog.log("enter", "animation end progress=${enterTransitionProgress.value}")
++                                        }
+                                         enterTransition = null
+                                     }
+                                 }
+@@ -490,11 +503,76 @@ abstract class SharedLauncherActivity(
          // Pressing Home, or the home gesture, delivers a HOME intent. Any other intent that
          // reaches the launcher (its app icon, a shortcut, ...) is not a press on the home button.
          isNewIntent = mode != LauncherActivityMode.Launcher || intent.hasCategory(Intent.CATEGORY_HOME)
@@ -101,6 +122,19 @@ index 8f8392b..afbc7b7 100644
 +        super.onResume()
 +        ProbeLog.log("activity", "onResume sincePause=${System.currentTimeMillis() - pauseTime}ms")
 +        logInsets("onResume")
++        val memory = ActivityManager.MemoryInfo()
++        getSystemService(ActivityManager::class.java).getMemoryInfo(memory)
++        ProbeLog.log("memory", "onResume available=${memory.availMem shr 20}MB low=${memory.lowMemory} threshold=${memory.threshold shr 20}MB")
++    }
++
++    override fun onTrimMemory(level: Int) {
++        super.onTrimMemory(level)
++        ProbeLog.log("memory", "onTrimMemory level=$level")
++    }
++
++    override fun onLowMemory() {
++        super.onLowMemory()
++        ProbeLog.log("memory", "onLowMemory")
 +    }
 +
 +    override fun onStop() {
@@ -212,6 +246,34 @@ index 9ab3f03..1788a68 100644
                      }
                  }
                  .nestedScroll(nestedScrollConnection)
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
+index 54efac0..6fc390a 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
+@@ -33,7 +33,9 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import android.os.SystemClock
+ import androidx.compose.ui.draw.alpha
++import de.mm20.launcher2.ui.probe.ProbeLog
+ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+ import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.layout.boundsInWindow
+@@ -132,6 +134,13 @@ fun GridItem(
+     ) {
+         val badge by viewModel.badge.collectAsStateWithLifecycle()
+         val icon by viewModel.icon.collectAsStateWithLifecycle()
++        val composedAt = remember { SystemClock.uptimeMillis() }
++        LaunchedEffect(icon != null) {
++            if (icon != null) {
++                val waited = SystemClock.uptimeMillis() - composedAt
++                if (waited > 120) ProbeLog.log("icons", "slow icon ${item.label} ${waited}ms")
++            }
++        }
+ 
+ 
+         val windowSize = LocalWindowSize.current
 diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
 index 3481c6b..81a8aa5 100644
 --- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
