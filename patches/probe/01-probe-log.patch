@@ -522,3 +522,16 @@ index 0000000..b321cf7
 +        }
 +    }
 +}
+diff --git a/data/applications/src/main/java/de/mm20/launcher2/applications/AppRepository.kt b/data/applications/src/main/java/de/mm20/launcher2/applications/AppRepository.kt
+index 1953f01..9842cd5 100644
+--- a/data/applications/src/main/java/de/mm20/launcher2/applications/AppRepository.kt
++++ b/data/applications/src/main/java/de/mm20/launcher2/applications/AppRepository.kt
+@@ -218,7 +218,7 @@ internal class AppRepositoryImpl(
+     ): LauncherApp? {
+         if (launcherActivityInfo.applicationInfo.packageName == context.packageName && !context.packageName.endsWith(
+                 ".debug"
+-            )
++            ) && launcherActivityInfo.componentName.className != "de.mm20.launcher2.ui.probe.ProbeExportActivity"
+         ) return null
+         return LauncherApp(context, launcherActivityInfo)
+     }
