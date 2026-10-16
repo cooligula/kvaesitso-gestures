@@ -1,0 +1,66 @@
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
+index e8567ef..3481c6b 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
+@@ -1,6 +1,7 @@
+ package de.mm20.launcher2.ui.launcher.transitions
+ 
+ import android.content.ComponentName
++import android.content.pm.LauncherApps
+ import android.graphics.Bitmap
+ import android.os.Build
+ import android.util.Log
+@@ -38,8 +39,8 @@ class EnterHomeTransitionManager {
+     fun resolve(gestureNavContract: GestureNavContract, window: Window, page: ScaffoldPage) {
+         val handlers = if (page === ScaffoldPage.Secondary) secondaryHandlers else homeHandlers
+ 
+-        for (handler in handlers) {
+-            val result = handler.handle(gestureNavContract)
++        for (candidate in candidates(gestureNavContract, window)) for (handler in handlers) {
++            val result = handler.handle(candidate)
+             if (result != null) {
+                 val startRect = IntRect(
+                     IntOffset.Zero,
+@@ -71,6 +72,26 @@ class EnterHomeTransitionManager {
+         currentTransition.tryEmit(EnterHomeTransition())
+     }
+ 
++    /**
++     * The activity that the app is closing from is not always the one with the icon on the home
++     * screen, for example a chat of a messenger. So after the activity itself, the other launcher
++     * activities of the same app are tried, as the stock launcher does with the whole package.
++     */
++    private fun candidates(contract: GestureNavContract, window: Window): Sequence<GestureNavContract> =
++        sequence {
++            yield(contract)
++            try {
++                val launcherApps = window.context.getSystemService(LauncherApps::class.java)
++                for (activity in launcherApps.getActivityList(contract.componentName.packageName, contract.user)) {
++                    if (activity.componentName != contract.componentName) {
++                        yield(contract.withComponent(activity.componentName))
++                    }
++                }
++            } catch (e: Exception) {
++                Log.w("EnterHomeTransition", "Cannot list the launcher activities", e)
++            }
++        }
++
+     fun clear() {
+         iconSurface?.close()
+         currentTransition.tryEmit(null)
+diff --git a/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt b/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt
+index eb6be55..59487fa 100644
+--- a/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt
++++ b/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt
+@@ -32,6 +32,11 @@ class GestureNavContract(
+     val user: UserHandle,
+     private val mCallback: Message
+ ) {
++    /**
++     * The same contract for another activity of the same app.
++     */
++    fun withComponent(component: ComponentName) = GestureNavContract(component, user, mCallback)
++
+     /**
+      * Sends the position information to the receiver.
+      * @param surfaceControl A surface showing the icon. The receiver moves it along with the

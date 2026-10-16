@@ -213,10 +213,10 @@ index 9ab3f03..1788a68 100644
                  }
                  .nestedScroll(nestedScrollConnection)
 diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
-index e8567ef..bedb679 100644
+index 3481c6b..81a8aa5 100644
 --- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
 +++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
-@@ -17,6 +17,7 @@ import androidx.core.graphics.toRectF
+@@ -18,6 +18,7 @@ import androidx.core.graphics.toRectF
  import com.android.launcher3.GestureNavContract
  import de.mm20.launcher2.ktx.isAtLeastApiLevel
  import de.mm20.launcher2.ui.launcher.scaffold.ScaffoldPage
@@ -224,15 +224,15 @@ index e8567ef..bedb679 100644
  import kotlinx.coroutines.flow.MutableSharedFlow
  
  class EnterHomeTransitionManager {
-@@ -37,6 +38,7 @@ class EnterHomeTransitionManager {
+@@ -38,6 +39,7 @@ class EnterHomeTransitionManager {
  
      fun resolve(gestureNavContract: GestureNavContract, window: Window, page: ScaffoldPage) {
          val handlers = if (page === ScaffoldPage.Secondary) secondaryHandlers else homeHandlers
 +        ProbeLog.log("transition", "resolve page=$page handlers=${handlers.size} component=${gestureNavContract.componentName}")
  
-         for (handler in handlers) {
-             val result = handler.handle(gestureNavContract)
-@@ -55,6 +57,10 @@ class EnterHomeTransitionManager {
+         for (candidate in candidates(gestureNavContract, window)) for (handler in handlers) {
+             val result = handler.handle(candidate)
+@@ -56,6 +58,10 @@ class EnterHomeTransitionManager {
                  if (surface == null) {
                      gestureNavContract.sendEndPosition(targetBounds.toAndroidRect().toRectF())
                  }
@@ -243,7 +243,7 @@ index e8567ef..bedb679 100644
                  currentTransition.tryEmit(
                      EnterHomeTransition(
                          startBounds = startRect,
-@@ -68,10 +74,12 @@ class EnterHomeTransitionManager {
+@@ -69,6 +75,7 @@ class EnterHomeTransitionManager {
                  return
              }
          }
@@ -251,12 +251,15 @@ index e8567ef..bedb679 100644
          currentTransition.tryEmit(EnterHomeTransition())
      }
  
+@@ -93,6 +100,7 @@ class EnterHomeTransitionManager {
+         }
+ 
      fun clear() {
 +        ProbeLog.log("transition", "clear")
          iconSurface?.close()
          currentTransition.tryEmit(null)
      }
-@@ -83,7 +91,10 @@ class EnterHomeTransitionManager {
+@@ -104,7 +112,10 @@ class EnterHomeTransitionManager {
      ): GestureNavIconSurface? {
          if (!isAtLeastApiLevel(Build.VERSION_CODES.R) || bounds.isEmpty) return null
          return try {

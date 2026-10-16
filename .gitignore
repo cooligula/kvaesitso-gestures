@@ -7,3 +7,4 @@ keystore/
 *.p12
 *.keystore
 .DS_Store
+logs/
