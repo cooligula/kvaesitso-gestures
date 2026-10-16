@@ -27,12 +27,20 @@ notes = (
     f"Upstream: [{meta['upstream_slug']}](https://github.com/{meta['upstream_slug']}/releases/tag/{meta['upstream_tag']})"
     f" {meta['upstream_tag']} @ `{meta['upstream_sha']}`\n"
     f"APK SHA-256: `{digest}`\n\n"
-    f"Patches applied:\n" + "".join(f"- `{p}`\n" for p in meta["patches"]) +
-    f"\nBuild-Input: {meta['input']}\n"
 )
+if meta.get("variant") == "probe":
+    notes += (
+        "**Probe build**: it logs gesture and lifecycle events to a file for diagnosis. Open the "
+        "\"Probe log\" app icon to share the log. Obtainium does not follow it.\n\n"
+    )
+notes += "Patches applied:\n" + "".join(f"- `{p}`\n" for p in meta["patches"])
+notes += f"\nBuild-Input: {meta['input']}\n"
 with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as nf:
     nf.write(notes)
 title = f"{meta['title']} {meta['version_name']}"
-subprocess.run(["gh", "release", "create", meta["tag"], str(apk), str(sums),
-                "--repo", repo, "--title", title, "--notes-file", nf.name], check=True)
+cmd = ["gh", "release", "create", meta["tag"], str(apk), str(sums),
+       "--repo", repo, "--title", title, "--notes-file", nf.name]
+if meta.get("prerelease"):
+    cmd.append("--prerelease")  # Obtainium skips pre-releases unless asked to include them
+subprocess.run(cmd, check=True)
 print(f"released {meta['tag']}")

@@ -52,8 +52,12 @@ def set_output(**values):
                 f.write(f"{key}={value}\n")
 
 
-def patch_files():
-    return sorted(PATCHES.glob("*.patch"))
+def patch_files(variant="stable"):
+    """patches/*.patch go into every build; the probe build adds patches/probe/*.patch on top."""
+    files = sorted(PATCHES.glob("*.patch"))
+    if variant == "probe":
+        files += sorted((PATCHES / "probe").glob("*.patch"))
+    return files
 
 
 def upstream_url(cfg):
@@ -66,12 +70,14 @@ def version_of(tag):
     return tuple(int(p) for p in m.group(1).split(".")) if m else None
 
 
-def input_hash(cfg):
+def input_hash(cfg, variant="stable"):
     """Hash of everything that decides the contents of a build."""
     h = hashlib.sha256()
     h.update((ROOT / "build-rev.txt").read_bytes())
+    if variant != "stable":
+        h.update(variant.encode())
     h.update(json.dumps({k: cfg[k] for k in ("upstream", "build", "app")}, sort_keys=True).encode())
-    for p in patch_files():
+    for p in patch_files(variant):
         h.update(p.name.encode())
         h.update(p.read_bytes())
     return h.hexdigest()[:16]
@@ -87,19 +93,20 @@ def fetch_into(dest, cfg):
     run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
 
 
-def apply_patches(src):
-    """Apply every patch in order. Returns (applied, failed) lists of file names."""
+def apply_patches(src, files):
+    """Apply the patches in order. Returns (applied, failed) lists of file names."""
     applied, failed = [], []
-    for patch in patch_files():
+    for patch in files:
+        name = patch.relative_to(PATCHES).as_posix()
         try:
             run(["git", "apply", "--check", str(patch)], cwd=src, stderr=subprocess.STDOUT,
                 stdout=subprocess.PIPE)
         except subprocess.CalledProcessError as e:
-            print(f"patch {patch.name} does not apply:\n{e.stdout}")
-            failed.append(patch.name)
+            print(f"patch {name} does not apply:\n{e.stdout}")
+            failed.append(name)
             continue
         run(["git", "apply", str(patch)], cwd=src)
-        applied.append(patch.name)
+        applied.append(name)
     return applied, failed
 
 
@@ -119,7 +126,8 @@ def cmd_check(args):
         fetch_into(src, cfg)
         actual = out(["git", "rev-parse", "HEAD"], cwd=src)
         print(f"{cfg['upstream']['tag']} -> {actual}")
-        applied, failed = apply_patches(src)
+        # The probe patches build on the others, so both sets go onto one tree.
+        applied, failed = apply_patches(src, patch_files("probe"))
         for name in applied:
             print(f"ok      {name}")
         for name in failed:
@@ -142,7 +150,7 @@ def sub_once(text, pattern, repl, what):
 def cmd_prepare(args):
     cfg = load()
     revision = int(args.revision)
-    applied, failed = apply_patches(WORK)
+    applied, failed = apply_patches(WORK, patch_files(args.variant))
     if failed:
         sys.exit("prepare: patches do not apply: " + ", ".join(failed))
 
@@ -164,6 +172,8 @@ def cmd_prepare(args):
     if version_code >= 2**31 - 1:
         sys.exit(f"prepare: versionCode {version_code} does not fit an int")
     version_name = f"{upstream_version}-gestures.{revision}"
+    if args.variant == "probe":
+        version_name += "-probe"
 
     text = sub_once(text, r'(VERSION_CODE_OVERRIDE"\)\?\.toIntOrNull\(\)\s*\?:\s*)\d+',
                     lambda mm: f"{mm.group(1)}{version_code}", "versionCode")
@@ -174,6 +184,8 @@ def cmd_prepare(args):
     meta = {
         "title": cfg["app"]["title"],
         "application_id": cfg["app"]["application_id"],
+        "variant": args.variant,
+        "prerelease": args.variant == "probe",
         "upstream_slug": cfg["upstream"]["slug"],
         "upstream_tag": cfg["upstream"]["tag"],
         "upstream_sha": cfg["upstream"]["sha"],
@@ -182,7 +194,7 @@ def cmd_prepare(args):
         "version_code": version_code,
         "version_name": version_name,
         "tag": version_name,
-        "input": input_hash(cfg),
+        "input": input_hash(cfg, args.variant),
         "patches": applied,
     }
     (WORK / META_NAME).write_text(json.dumps(meta, indent=2))
@@ -212,20 +224,23 @@ def release_info(repo):
 def cmd_plan(args):
     cfg = load()
     version = cfg["upstream"]["tag"].lstrip("v")
-    digest = input_hash(cfg)
-    pattern = re.compile(rf"^{re.escape(version)}-gestures\.(\d+)$")
+    digest = input_hash(cfg, args.variant)
+    pattern = re.compile(rf"^{re.escape(version)}-gestures\.(\d+)(-probe)?$")
     releases = release_info(args.repo) if args.repo else {}
-    revisions = {int(m.group(1)): tag for tag in releases if (m := pattern.match(tag))}
+    found = [(int(m.group(1)), bool(m.group(2)), tag) for tag in releases if (m := pattern.match(tag))]
 
-    latest = max(revisions) if revisions else 0
+    # Revisions count up over both variants, so that every build can update the one before it.
+    revision = max((rev for rev, _, _ in found), default=0) + 1
+    stable = {rev: tag for rev, probe, tag in found if not probe}
     previous_input = None
-    if latest:
-        m = re.search(rf"{BUILD_MARKER}\s*(\w+)", releases[revisions[latest]])
+    if stable:
+        m = re.search(rf"{BUILD_MARKER}\s*(\w+)", releases[stable[max(stable)]])
         previous_input = m.group(1) if m else None
-    needed = args.all or args.force or previous_input != digest
-    revision = latest + 1
+    # The probe is only built when asked for.
+    needed = args.all or args.force or args.variant == "probe" or previous_input != digest
+    suffix = "-probe" if args.variant == "probe" else ""
     result = {"needed": needed, "revision": revision, "input": digest,
-              "version_name": f"{version}-gestures.{revision}", "java": cfg["build"]["java"]}
+              "version_name": f"{version}-gestures.{revision}{suffix}", "java": cfg["build"]["java"]}
     print(json.dumps(result))
     set_output(needed=str(needed).lower(), revision=revision, java=cfg["build"]["java"],
                version_name=result["version_name"])
@@ -360,6 +375,7 @@ def main():
     s.add_argument("--repo", help="owner/name, to compare with the existing releases")
     s.add_argument("--all", action="store_true", help="a build is needed whatever the releases say")
     s.add_argument("--force", action="store_true", help="rebuild even when the inputs did not change")
+    s.add_argument("--variant", default="stable", choices=["stable", "probe"])
     s.set_defaults(fn=cmd_plan)
 
     s = sp.add_parser("fetch")
@@ -367,6 +383,7 @@ def main():
 
     s = sp.add_parser("prepare")
     s.add_argument("--revision", default="1", help="patch revision of this upstream version")
+    s.add_argument("--variant", default="stable", choices=["stable", "probe"])
     s.set_defaults(fn=cmd_prepare)
 
     s = sp.add_parser("obtainium")

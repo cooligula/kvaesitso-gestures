@@ -14,6 +14,11 @@ on:
         description: "Sign and publish a release (main branch only)"
         type: boolean
         default: false
+      variant:
+        description: "stable, or probe (a pre-release with diagnostic logging)"
+        type: choice
+        options: [stable, probe]
+        default: stable
 
 permissions:
   contents: read
@@ -36,8 +41,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           FORCE: ${{ inputs.force }}
+          VARIANT: ${{ inputs.variant || 'stable' }}
         run: |
-          args=(--repo "$GITHUB_REPOSITORY")
+          args=(--repo "$GITHUB_REPOSITORY" --variant "$VARIANT")
           # Pull requests and bump branches always build, to prove the patches still apply and compile.
           if [ "$EVENT" = "pull_request" ] || [ "$GITHUB_REF" != "refs/heads/main" ]; then args+=(--all); fi
           if [ "$FORCE" = "true" ]; then args+=(--force); fi
@@ -62,7 +68,9 @@ jobs:
         run: python3 scripts/kvgestures.py fetch
 
       - name: Patch and set the version
-        run: python3 scripts/kvgestures.py prepare --revision ${{ needs.plan.outputs.revision }}
+        run: >
+          python3 scripts/kvgestures.py prepare
+          --revision ${{ needs.plan.outputs.revision }} --variant ${{ inputs.variant || 'stable' }}
 
       - name: Build unsigned APK
         run: bash scripts/build.sh

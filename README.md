@@ -46,6 +46,31 @@ Versions look like `1.41.0-gestures.1`: the upstream version, and the revision o
    GitHub release. Merging a change to the patches alone publishes a new revision of the same upstream
    version. Merges that change nothing about the build publish nothing.
 
+## Probe build
+
+A second variant that logs what the gesture code is doing, for diagnosing problems over a whole day.
+It is the normal build plus [`patches/probe/`](patches/probe/), published as a pre-release, so
+Obtainium does not follow it. It has the same application id and key, so it installs over the normal
+build without losing data.
+
+```sh
+gh workflow run build.yml --ref main -f variant=probe -f release=true
+```
+
+Install the APK from the new `...-probe` release, use the phone normally, then open the **Probe log**
+icon (it appears in the app list next to Kvaesitso) and share the file. To go back, publish a normal
+build, which gets a higher version and so replaces the probe:
+
+```sh
+gh workflow run build.yml --ref main -f force=true -f release=true
+```
+
+The log has one file per day (the last 7 are kept) in the app's private storage. It records the device
+model and Android build, process starts and crashes, the lifecycle and every intent the launcher
+receives, the navigation mode and gesture insets, where touches start near the bottom edge, the
+Home-press decisions, and every step of the swipe-home animation with timings. It contains the package
+name of the app you swipe home from and no other app data, text or screen content.
+
 ## Layout
 
 - [`upstream.toml`](upstream.toml): the pinned upstream tag and commit, and the build settings.

@@ -1,0 +1,524 @@
+diff --git a/app/ui/src/main/AndroidManifest.xml b/app/ui/src/main/AndroidManifest.xml
+index 3ae68a9..7de14b5 100644
+--- a/app/ui/src/main/AndroidManifest.xml
++++ b/app/ui/src/main/AndroidManifest.xml
+@@ -87,6 +87,19 @@
+ 
+         <activity android:name=".launcher.sheets.BindAndConfigureAppWidgetActivity" />
+ 
++        <activity
++            android:name=".probe.ProbeExportActivity"
++            android:exported="true"
++            android:excludeFromRecents="true"
++            android:label="Probe log"
++            android:taskAffinity=""
++            android:theme="@android:style/Theme.NoDisplay">
++            <intent-filter>
++                <action android:name="android.intent.action.MAIN" />
++                <category android:name="android.intent.category.LAUNCHER" />
++            </intent-filter>
++        </activity>
++
+         <activity
+             android:name=".launcher.ImportThemeActivity"
+             android:excludeFromRecents="true"
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/LauncherActivity.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/LauncherActivity.kt
+index b871503..b39ba0e 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/LauncherActivity.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/LauncherActivity.kt
+@@ -3,6 +3,7 @@ package de.mm20.launcher2.ui.launcher
+ import android.content.Intent
+ import com.android.launcher3.GestureNavContract
+ import de.mm20.launcher2.ui.launcher.scaffold.ScaffoldPage
++import de.mm20.launcher2.ui.probe.ProbeLog
+ 
+ 
+ class LauncherActivity: SharedLauncherActivity(LauncherActivityMode.Launcher) {
+@@ -15,6 +16,11 @@ class LauncherActivity: SharedLauncherActivity(LauncherActivityMode.Launcher) {
+             } else {
+                 ScaffoldPage.Secondary
+             }
++            ProbeLog.log(
++                "contract",
++                "received component=${navContract.componentName} user=${navContract.user} " +
++                        "page=$page pauseOnHome=$pauseOnHome sincePause=${System.currentTimeMillis() - pauseTime}ms"
++            )
+             enterHomeTransitionManager.resolve(navContract, window, page)
+         }
+     }
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
+index 8f8392b..afbc7b7 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
+@@ -34,7 +34,12 @@ import androidx.compose.ui.graphics.graphicsLayer
+ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.dp
+ import androidx.core.view.WindowCompat
++import androidx.core.view.ViewCompat
++import androidx.core.view.WindowInsetsCompat
+ import androidx.core.view.WindowInsetsControllerCompat
++import android.provider.Settings
++import com.android.launcher3.GestureNavContract
++import de.mm20.launcher2.ui.probe.ProbeLog
+ import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.flowWithLifecycle
+ import de.mm20.launcher2.ktx.isAtLeastApiLevel
+@@ -100,6 +105,8 @@ abstract class SharedLauncherActivity(
+             window.isStatusBarContrastEnforced = false
+         }
+         super.onCreate(savedInstanceState)
++        ProbeLog.init(this)
++        ProbeLog.log("activity", "onCreate ${javaClass.simpleName} restored=${savedInstanceState != null}")
+ 
+         if (savedInstanceState != null) {
+             pauseOnHome = savedInstanceState.getBoolean("pauseOnHome")
+@@ -490,11 +497,63 @@ abstract class SharedLauncherActivity(
+         // Pressing Home, or the home gesture, delivers a HOME intent. Any other intent that
+         // reaches the launcher (its app icon, a shortcut, ...) is not a press on the home button.
+         isNewIntent = mode != LauncherActivityMode.Launcher || intent.hasCategory(Intent.CATEGORY_HOME)
++        ProbeLog.log(
++            "intent",
++            "onNewIntent action=${intent.action} categories=${intent.categories} " +
++                    "flags=0x${Integer.toHexString(intent.flags)} component=${intent.component} " +
++                    "contract=${intent.hasExtra(GestureNavContract.EXTRA_GESTURE_CONTRACT)} " +
++                    "isNewIntent=$isNewIntent state=${lifecycle.currentState} " +
++                    "sincePause=${System.currentTimeMillis() - pauseTime}ms"
++        )
+     }
+ 
+     override fun onPause() {
+         super.onPause()
+         isNewIntent = false
++        ProbeLog.log("activity", "onPause")
++    }
++
++    override fun onStart() {
++        super.onStart()
++        ProbeLog.log("activity", "onStart")
++    }
++
++    override fun onResume() {
++        super.onResume()
++        ProbeLog.log("activity", "onResume sincePause=${System.currentTimeMillis() - pauseTime}ms")
++        logInsets("onResume")
++    }
++
++    override fun onStop() {
++        super.onStop()
++        ProbeLog.log("activity", "onStop")
++    }
++
++    override fun onDestroy() {
++        super.onDestroy()
++        ProbeLog.log("activity", "onDestroy finishing=$isFinishing")
++    }
++
++    override fun onWindowFocusChanged(hasFocus: Boolean) {
++        super.onWindowFocusChanged(hasFocus)
++        ProbeLog.log("activity", "focus=$hasFocus")
++    }
++
++    private fun logInsets(reason: String) {
++        val root = ViewCompat.getRootWindowInsets(window.decorView)
++        fun fmt(type: Int): String {
++            val i = root?.getInsets(type) ?: return "n/a"
++            return "${i.left},${i.top},${i.right},${i.bottom}"
++        }
++        ProbeLog.log(
++            "insets",
++            "$reason navMode=${Settings.Secure.getInt(contentResolver, "navigation_mode", -1)} " +
++                    "orientation=${resources.configuration.orientation} " +
++                    "systemGestures=${fmt(WindowInsetsCompat.Type.systemGestures())} " +
++                    "mandatory=${fmt(WindowInsetsCompat.Type.mandatorySystemGestures())} " +
++                    "navBars=${fmt(WindowInsetsCompat.Type.navigationBars())} " +
++                    "statusBars=${fmt(WindowInsetsCompat.Type.statusBars())}"
++        )
+     }
+ 
+     override fun onSaveInstanceState(outState: Bundle) {
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/scaffold/LauncherScaffold.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/scaffold/LauncherScaffold.kt
+index 9ab3f03..1788a68 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/scaffold/LauncherScaffold.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/scaffold/LauncherScaffold.kt
+@@ -85,6 +85,7 @@ import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.platform.LocalHapticFeedback
+ import androidx.compose.ui.platform.LocalView
++import de.mm20.launcher2.ui.probe.ProbeLog
+ import androidx.compose.ui.platform.LocalViewConfiguration
+ import androidx.compose.ui.unit.Dp
+ import androidx.compose.ui.unit.IntOffset
+@@ -572,6 +573,7 @@ internal class LauncherScaffoldState(
+      */
+     suspend fun onDragStopped(velocity: Velocity, disallowPageChange: Boolean = false) {
+         isDragged = false
++        ProbeLog.log("gesture", "dragStopped gesture=$currentGesture velocity=$velocity progress=$currentProgress")
+         if (isLocked || currentZOffset > 0f) return
+         val velocity = when {
+             !isAtTop && !isAtBottom -> velocity.copy(y = 0f)
+@@ -765,6 +767,7 @@ internal class LauncherScaffoldState(
+      * End the predictive back gesture and return to the home page.
+      */
+     suspend fun onPredictiveBackEnd() {
++        ProbeLog.log("gesture", "predictiveBackEnd")
+         navigateBack()
+     }
+ 
+@@ -791,6 +794,7 @@ internal class LauncherScaffoldState(
+     }
+ 
+     private suspend fun performTapGesture(gesture: Gesture) {
++        ProbeLog.log("gesture", "tap gesture=$gesture")
+         val component = config[gesture]?.component ?: return
+ 
+         if (component.hapticFeedback) onHapticFeedback(HapticFeedbackType.LongPress)
+@@ -1098,18 +1102,28 @@ internal fun LauncherScaffold(
+ 
+             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                 try {
++                    ProbeLog.log(
++                        "home",
++                        "resumed sincePause=${System.currentTimeMillis() - activity.pauseTime}ms " +
++                                "isNewIntent=${activity.isNewIntent} progress=${state.currentProgress} " +
++                                "locked=${state.isLocked} secondary=${state.isSettledOnSecondaryPage}"
++                    )
+                     if (activity.pauseTime > 0L && System.currentTimeMillis() - activity.pauseTime < 50L && activity.isNewIntent) {
+                         if (!state.isLocked) {
+                             if (state.currentProgress > 0f) {
++                                ProbeLog.log("home", "decision: close the open page")
+                                 state.onPredictiveBackEnd()
+                             } else {
++                                ProbeLog.log("home", "decision: home button gesture")
+                                 state.onHomeButtonPress()
+                             }
+                         } else {
++                            ProbeLog.log("home", "decision: back (locked)")
+                             activity.onBackPressedDispatcher.onBackPressed()
+                         }
+                     } else if (activity.pauseTime > 0L && System.currentTimeMillis() - activity.pauseTime > 5000L) {
+                         if (!state.isLocked) {
++                            ProbeLog.log("home", "decision: reset after a long pause")
+                             if (state.currentComponent?.survivesPause != true) {
+                                 state.reset()
+                             }
+@@ -1251,6 +1265,10 @@ internal fun LauncherScaffold(
+                         )
+                         touchedSystemGestureZone.value =
+                             down.position.y > size.height - systemGestureZoneHeight
++                        ProbeLog.log(
++                            "zone",
++                            "down y=${down.position.y} height=${size.height} zone=$systemGestureZoneHeight in=${touchedSystemGestureZone.value}"
++                        )
+                     }
+                 }
+                 .nestedScroll(nestedScrollConnection)
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
+index e8567ef..bedb679 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
+@@ -17,6 +17,7 @@ import androidx.core.graphics.toRectF
+ import com.android.launcher3.GestureNavContract
+ import de.mm20.launcher2.ktx.isAtLeastApiLevel
+ import de.mm20.launcher2.ui.launcher.scaffold.ScaffoldPage
++import de.mm20.launcher2.ui.probe.ProbeLog
+ import kotlinx.coroutines.flow.MutableSharedFlow
+ 
+ class EnterHomeTransitionManager {
+@@ -37,6 +38,7 @@ class EnterHomeTransitionManager {
+ 
+     fun resolve(gestureNavContract: GestureNavContract, window: Window, page: ScaffoldPage) {
+         val handlers = if (page === ScaffoldPage.Secondary) secondaryHandlers else homeHandlers
++        ProbeLog.log("transition", "resolve page=$page handlers=${handlers.size} component=${gestureNavContract.componentName}")
+ 
+         for (handler in handlers) {
+             val result = handler.handle(gestureNavContract)
+@@ -55,6 +57,10 @@ class EnterHomeTransitionManager {
+                 if (surface == null) {
+                     gestureNavContract.sendEndPosition(targetBounds.toAndroidRect().toRectF())
+                 }
++                ProbeLog.log(
++                    "transition",
++                    "handler matched target=$targetBounds start=$startRect icon=${result.icon != null} surface=${surface != null}"
++                )
+                 currentTransition.tryEmit(
+                     EnterHomeTransition(
+                         startBounds = startRect,
+@@ -68,10 +74,12 @@ class EnterHomeTransitionManager {
+                 return
+             }
+         }
++        ProbeLog.log("transition", "no handler matched")
+         currentTransition.tryEmit(EnterHomeTransition())
+     }
+ 
+     fun clear() {
++        ProbeLog.log("transition", "clear")
+         iconSurface?.close()
+         currentTransition.tryEmit(null)
+     }
+@@ -83,7 +91,10 @@ class EnterHomeTransitionManager {
+     ): GestureNavIconSurface? {
+         if (!isAtLeastApiLevel(Build.VERSION_CODES.R) || bounds.isEmpty) return null
+         return try {
+-            val surface = iconSurface ?: GestureNavIconSurface(window) { hiddenComponent = it }.also { iconSurface = it }
++            val surface = iconSurface ?: GestureNavIconSurface(window) {
++                ProbeLog.log("transition", "hiddenComponent=$it")
++                hiddenComponent = it
++            }.also { iconSurface = it }
+             if (surface.show(gestureNavContract, bounds)) surface else null
+         } catch (e: Exception) {
+             Log.e("EnterHomeTransition", "Cannot show the icon surface", e)
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt
+index 0aad3cc..d5155ca 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt
+@@ -9,6 +9,7 @@ import android.graphics.RectF
+ import android.os.Handler
+ import android.os.Looper
+ import android.os.Message
++import android.os.SystemClock
+ import android.os.Messenger
+ import android.util.Log
+ import android.view.SurfaceControl
+@@ -20,6 +21,7 @@ import android.widget.FrameLayout
+ import androidx.compose.ui.graphics.toAndroidRect
+ import androidx.compose.ui.unit.IntRect
+ import com.android.launcher3.GestureNavContract
++import de.mm20.launcher2.ui.probe.ProbeLog
+ 
+ /**
+  * The icon that the system animates to when swiping home. Like the Launcher3 does, the icon is
+@@ -42,18 +44,23 @@ internal class GestureNavIconSurface(
+ 
+     private val finishMessenger = Messenger(Handler(Looper.getMainLooper()) { message ->
+         if (message.what == MSG_FINISHED) {
++            ProbeLog.log("surface", "finish callback after ${SystemClock.uptimeMillis() - shownAt}ms")
+             close()
+             true
+         } else false
+     })
+ 
+     private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+-    private val closeRunnable = Runnable { close() }
++    private val closeRunnable = Runnable {
++        ProbeLog.log("surface", "timeout after ${SystemClock.uptimeMillis() - shownAt}ms")
++        close()
++    }
+ 
+     private var contract: GestureNavContract? = null
+     private var surfaceView: SurfaceView? = null
+     private var position = RectF()
+     private var icon: Bitmap? = null
++    private var shownAt = 0L
+ 
+     /**
+      * Shows the surface at [bounds] and tells the system about it.
+@@ -80,6 +87,8 @@ internal class GestureNavIconSurface(
+         surfaceView = view
+         position = RectF(bounds.toAndroidRect())
+ 
++        shownAt = SystemClock.uptimeMillis()
++        ProbeLog.log("surface", "show bounds=$bounds component=${contract.componentName}")
+         // The position is known right away, the surface only later (surfaceCreated).
+         sendInfo(null)
+         onIconVisible(contract.componentName)
+@@ -100,6 +109,7 @@ internal class GestureNavIconSurface(
+         handler.removeCallbacks(closeRunnable)
+         contract = null
+         icon = null
++        ProbeLog.log("surface", "close view=${surfaceView != null}")
+         onIconVisible(null)
+         val view = surfaceView ?: return
+         surfaceView = null
+@@ -113,10 +123,12 @@ internal class GestureNavIconSurface(
+             what = MSG_FINISHED
+             replyTo = finishMessenger
+         }
++        ProbeLog.log("surface", "send position=$position surface=${surfaceControl?.isValid} contract=${contract != null}")
+         contract?.sendEndPosition(position, surfaceControl, finishCallback)
+     }
+ 
+     override fun surfaceCreated(holder: SurfaceHolder) {
++        ProbeLog.log("surface", "surfaceCreated after ${SystemClock.uptimeMillis() - shownAt}ms icon=${icon != null}")
+         draw()
+         val view = surfaceView ?: return
+         val surfaceControl = view.surfaceControl
+@@ -143,6 +155,7 @@ internal class GestureNavIconSurface(
+                     RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat()),
+                     paint
+                 )
++                ProbeLog.log("surface", "drawn ${canvas.width}x${canvas.height} after ${SystemClock.uptimeMillis() - shownAt}ms")
+             } finally {
+                 holder.unlockCanvasAndPost(canvas)
+             }
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt
+index 7382639..c028918 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt
+@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
+ import androidx.compose.ui.graphics.rememberGraphicsLayer
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.unit.IntSize
++import de.mm20.launcher2.ui.probe.ProbeLog
+ import kotlinx.coroutines.CancellationException
+ 
+ /**
+@@ -45,11 +46,14 @@ internal fun IconSnapshot(
+         // Give the content a few frames to be composed, laid out and recorded.
+         repeat(3) { withFrameNanos { } }
+         try {
+-            onSnapshot(layer.toImageBitmap().asAndroidBitmap())
++            val bitmap = layer.toImageBitmap().asAndroidBitmap()
++            ProbeLog.log("snapshot", "rendered ${bitmap.width}x${bitmap.height} config=${bitmap.config} requested=$size")
++            onSnapshot(bitmap)
+         } catch (e: CancellationException) {
+             throw e
+         } catch (e: Exception) {
+             Log.e("IconSnapshot", "Cannot render the icon", e)
++            ProbeLog.log("snapshot", "failed: $e")
+             onSnapshot(null)
+         }
+     }
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/probe/ProbeExportActivity.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/probe/ProbeExportActivity.kt
+new file mode 100644
+index 0000000..d67d021
+--- /dev/null
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/probe/ProbeExportActivity.kt
+@@ -0,0 +1,31 @@
++package de.mm20.launcher2.ui.probe
++
++import android.app.Activity
++import android.content.Intent
++import android.os.Bundle
++import androidx.core.content.FileProvider
++
++/**
++ * Shares the log of the probe build. It has an icon of its own, "Probe log".
++ */
++class ProbeExportActivity : Activity() {
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++        ProbeLog.init(this)
++        ProbeLog.log("export", "log shared")
++        val file = ProbeLog.export(this)
++        if (file != null) {
++            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
++            val send = Intent(Intent.ACTION_SEND).apply {
++                type = "text/plain"
++                putExtra(Intent.EXTRA_STREAM, uri)
++                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++            }
++            startActivity(
++                Intent.createChooser(send, "Kvaesitso probe log")
++                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++            )
++        }
++        finish()
++    }
++}
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/probe/ProbeLog.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/probe/ProbeLog.kt
+new file mode 100644
+index 0000000..b321cf7
+--- /dev/null
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/probe/ProbeLog.kt
+@@ -0,0 +1,100 @@
++package de.mm20.launcher2.ui.probe
++
++import android.content.Context
++import android.os.Build
++import android.os.Process
++import android.util.Log
++import java.io.File
++import java.text.SimpleDateFormat
++import java.util.Date
++import java.util.Locale
++import java.util.concurrent.Executors
++
++/**
++ * Diagnostic log of the probe build. Lines are appended to one file per day in the app's files
++ * directory, so that a log of a whole day can be shared afterwards (see [ProbeExportActivity]).
++ */
++object ProbeLog {
++    private const val TAG = "KvProbe"
++    private const val MAX_FILE_BYTES = 8L * 1024 * 1024
++    private const val KEEP_FILES = 7
++
++    private val pid = Process.myPid()
++    private val executor = Executors.newSingleThreadExecutor { r ->
++        Thread(r, "probe-log").apply { isDaemon = true }
++    }
++
++    @Volatile
++    private var dir: File? = null
++
++    fun init(context: Context) {
++        if (dir != null) return
++        synchronized(this) {
++            if (dir != null) return
++            val d = File(context.applicationContext.filesDir, "probe")
++            d.mkdirs()
++            dir = d
++            try {
++                d.listFiles { f -> f.name.startsWith("probe-") }
++                    ?.sortedBy { it.name }
++                    ?.dropLast(KEEP_FILES)
++                    ?.forEach { it.delete() }
++            } catch (e: Exception) {
++                Log.e(TAG, "Cannot prune", e)
++            }
++            val previous = Thread.getDefaultUncaughtExceptionHandler()
++            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
++                write(System.currentTimeMillis(), thread.name, "CRASH", Log.getStackTraceString(throwable))
++                previous?.uncaughtException(thread, throwable)
++            }
++        }
++        log(
++            "process",
++            "start pid=$pid ${Build.MANUFACTURER} ${Build.MODEL} api=${Build.VERSION.SDK_INT} " +
++                    "${Build.DISPLAY} fingerprint=${Build.FINGERPRINT}"
++        )
++    }
++
++    fun log(tag: String, message: String) {
++        if (dir == null) return
++        val now = System.currentTimeMillis()
++        val thread = Thread.currentThread().name
++        Log.d(TAG, "$tag: $message")
++        try {
++            executor.execute { write(now, thread, tag, message) }
++        } catch (e: Exception) {
++            // The executor can not run anymore; there is nothing left to do
++        }
++    }
++
++    private fun write(time: Long, thread: String, tag: String, message: String) {
++        val d = dir ?: return
++        try {
++            val date = Date(time)
++            val file = File(d, "probe-" + SimpleDateFormat("yyyyMMdd", Locale.US).format(date) + ".log")
++            if (file.length() > MAX_FILE_BYTES) return
++            val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(date)
++            file.appendText("$stamp [$pid/$thread] $tag: $message\n")
++        } catch (e: Exception) {
++            Log.e(TAG, "Cannot write", e)
++        }
++    }
++
++    /**
++     * Puts all logs into a single file that can be shared.
++     */
++    fun export(context: Context): File? {
++        val d = dir ?: return null
++        val out = File(context.cacheDir, "kvaesitso-probe.log")
++        return try {
++            out.delete()
++            d.listFiles { f -> f.name.startsWith("probe-") }
++                ?.sortedBy { it.name }
++                ?.forEach { out.appendText(it.readText()) }
++            out
++        } catch (e: Exception) {
++            Log.e(TAG, "Cannot export", e)
++            null
++        }
++    }
++}
