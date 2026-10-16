@@ -1,0 +1,19 @@
+# The Kvaesitso release this repository builds. The bump workflow moves `tag` and `sha`
+# to the newest full (non-pre-release) upstream release and opens a pull request.
+
+[upstream]
+slug = "MM2-0/Kvaesitso"
+tag = "v1.41.0"
+sha = "328073f38f8472118a377f69cce34a2c86372ab9"
+
+[build]
+java = 17
+build_file = "app/app/build.gradle.kts"
+# The same variant upstream publishes on its releases page: default flavor, release type.
+gradle_task = ":app:app:assembleDefaultRelease"
+apk_dir = "app/app/build/outputs/apk/default/release"
+
+[app]
+title = "Kvaesitso"
+# Unchanged on purpose: the patched build is a drop-in replacement for upstream's release build.
+application_id = "de.mm20.launcher2.release"

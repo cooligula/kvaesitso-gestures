@@ -1,0 +1,122 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even when the inputs did not change"
+        type: boolean
+        default: false
+      release:
+        description: "Sign and publish a release (main branch only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.plan.outputs.needed }}
+      revision: ${{ steps.plan.outputs.revision }}
+      java: ${{ steps.plan.outputs.java }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY")
+          # Pull requests and bump branches always build, to prove the patches still apply and compile.
+          if [ "$EVENT" = "pull_request" ] || [ "$GITHUB_REF" != "refs/heads/main" ]; then args+=(--all); fi
+          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          python3 scripts/kvgestures.py plan "${args[@]}"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ needs.plan.outputs.java }}
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Fetch upstream
+        run: python3 scripts/kvgestures.py fetch
+
+      - name: Patch and set the version
+        run: python3 scripts/kvgestures.py prepare --revision ${{ needs.plan.outputs.revision }}
+
+      - name: Build unsigned APK
+        run: bash scripts/build.sh
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [plan, build]
+    if: >
+      always() && needs.build.result == 'success' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    environment: release   # holds the signing secrets
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+
+      - name: Sign
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          CERT_SHA256: ${{ vars.CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          [ -n "$KEYSTORE_B64" ] || { echo "KEYSTORE_B64 secret is missing" >&2; exit 1; }
+          export KEYSTORE_PATH="$RUNNER_TEMP/signing.p12"
+          echo "$KEYSTORE_B64" | base64 -d > "$KEYSTORE_PATH"
+          trap 'rm -f "$KEYSTORE_PATH"' EXIT
+          unsigned="$(ls unsigned/*-unsigned.apk)"
+          mkdir -p signed
+          bash scripts/sign.sh "$unsigned" "signed/$(basename "$unsigned" -unsigned.apk).apk"
+          cp unsigned/meta.json signed/meta.json
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: signed/*.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py signed "$GITHUB_REPOSITORY"

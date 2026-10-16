@@ -1,0 +1,68 @@
+name: bump upstream
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/kvgestures.py bump
+
+      - id: check
+        if: steps.bump.outputs.changed == 'true'
+        run: python3 scripts/kvgestures.py check --soft | tee check.txt
+
+      - name: Open the pull request
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
+          PATCHES_OK: ${{ steps.check.outputs.patches_ok }}
+        run: |
+          set -euo pipefail
+          branch="bump/kvaesitso-$TAG"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            echo "$branch already exists, nothing to do"
+            exit 0
+          fi
+          git config user.name "kvaesitso-gestures-bot"
+          git config user.email "kvaesitso-gestures-bot@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add upstream.toml
+          git commit -m "Kvaesitso $TAG" -m "Moves the upstream pin from $PREVIOUS to $TAG."
+          git push -u origin "$branch"
+
+          if [ "$PATCHES_OK" = "true" ]; then
+            status="All patches apply to $TAG. Merging this builds, signs and releases the patched app."
+            flags=()
+          else
+            status="**Some patches no longer apply.** Rebase them on $TAG on this branch before merging."
+            flags=(--draft)
+          fi
+          {
+            echo "Upstream released [$TAG](https://github.com/MM2-0/Kvaesitso/releases/tag/$TAG) (was $PREVIOUS)."
+            echo
+            echo "$status"
+            echo
+            echo '```'
+            cat check.txt
+            echo '```'
+          } > body.md
+          gh pr create --base main --head "$branch" "${flags[@]}" \
+            --title "Kvaesitso $TAG" --body-file body.md
+          # PRs opened with GITHUB_TOKEN do not trigger workflows, so start the build on the branch.
+          gh workflow run build.yml --ref "$branch"

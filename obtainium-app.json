@@ -1,0 +1,12 @@
+{
+  "apps": [
+    {
+      "id": "de.mm20.launcher2.release",
+      "url": "https://github.com/cooligula/kvaesitso-gestures",
+      "author": "cooligula",
+      "name": "Kvaesitso (gestures)",
+      "preferredApkIndex": 0,
+      "additionalSettings": "{\"includePrereleases\": false, \"fallbackToOlderReleases\": true, \"apkFilterRegEx\": \"\\\\.apk$\", \"autoApkFilterByArch\": false}"
+    }
+  ]
+}
