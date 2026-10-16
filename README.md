@@ -45,22 +45,6 @@ Versions look like `1.41.0-gestures.1`: the upstream version, and the revision o
    GitHub release. Merging a change to the patches alone publishes a new revision of the same upstream
    version. Merges that change nothing about the build publish nothing.
 
-## One-time setup
-
-The release job signs with the key you already use for your other apps. With the GitHub CLI logged in:
-
-```sh
-scripts/setup-signing.sh
-```
-
-It reads the key from `~/.losforgos-keystore` (never creates one), stores it as secrets in a `release`
-environment that only the `main` branch can use, sets `CERT_SHA256` so any other key is refused, and
-allows Actions to open pull requests. Then publish the first release:
-
-```sh
-gh workflow run build.yml --ref main -f release=true -f force=true
-```
-
 ## Layout
 
 - [`upstream.toml`](upstream.toml): the pinned upstream tag and commit, and the build settings.
