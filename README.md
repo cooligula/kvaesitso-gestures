@@ -19,6 +19,7 @@ filter to `\.apk$` (the checksum file is a second asset) and turn "Fallback to o
 | Patch | What it does |
 |---|---|
 | [`01-ignore-system-gesture-zone`](patches/01-ignore-system-gesture-zone.patch) | A touch that starts in the system gesture area (the home bar with gesture navigation) no longer moves the launcher's pages, and none of its swipe gestures fire from there. Android hands those touches to the system, but the launcher still sees them until the system takes over. That is the suspected cause of the launcher twitching, or opening the widgets or search page, around a swipe up to Home, to Recents or between apps ([#732](https://github.com/MM2-0/Kvaesitso/issues/732), [#1412](https://github.com/MM2-0/Kvaesitso/issues/1412), [#2038](https://github.com/MM2-0/Kvaesitso/issues/2038)). Nothing changes with 3-button navigation, where that area is empty. |
+| [`02-home-press-only-for-home-intents`](patches/02-home-press-only-for-home-intents.patch) | The launcher runs its "home button" gesture action when it receives a new intent just after pausing. Now only a real Home intent (the home button or the home gesture) counts, not every intent that reaches the launcher, such as one from its own app icon or a shortcut. |
 
 The patches work only inside Kvaesitso. Android's gesture navigation itself (the swipe animations and
 Recents) is implemented by the system launcher, which is why a third-party launcher cannot replace it.

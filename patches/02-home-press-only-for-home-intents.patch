@@ -1,0 +1,15 @@
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
+index 0a9f658..6f238b0 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
+@@ -473,7 +473,9 @@ abstract class SharedLauncherActivity(
+     var isNewIntent = false
+     override fun onNewIntent(intent: Intent) {
+         super.onNewIntent(intent)
+-        isNewIntent = true
++        // Pressing Home, or the home gesture, delivers a HOME intent. Any other intent that
++        // reaches the launcher (its app icon, a shortcut, ...) is not a press on the home button.
++        isNewIntent = mode != LauncherActivityMode.Launcher || intent.hasCategory(Intent.CATEGORY_HOME)
+     }
+ 
+     override fun onPause() {
