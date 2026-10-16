@@ -1,3 +1,18 @@
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
+index 54efac0..abe5e45 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
+@@ -136,8 +136,9 @@ fun GridItem(
+ 
+         val windowSize = LocalWindowSize.current
+         val hiddenComponent = LocalEnterHomeTransitionManager.current?.hiddenComponent
++        // By app: the activity that the app closes from can be another one than the icon's.
+         val hiddenByTransition = hiddenComponent != null && item is Application &&
+-                item.componentName == hiddenComponent
++                item.componentName.packageName == hiddenComponent.packageName
+ 
+         if (item is Application) {
+             HandleEnterHomeTransition {
 diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
 index e8567ef..3481c6b 100644
 --- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
