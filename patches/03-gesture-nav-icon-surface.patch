@@ -1,0 +1,501 @@
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
+index 6f238b0..8f8392b 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/SharedLauncherActivity.kt
+@@ -19,6 +19,7 @@ import androidx.compose.material3.SnackbarHost
+ import androidx.compose.material3.SnackbarHostState
+ import androidx.compose.runtime.CompositionLocalProvider
+ import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.key
+ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+@@ -72,6 +73,7 @@ import de.mm20.launcher2.ui.launcher.sheets.LauncherBottomSheets
+ import de.mm20.launcher2.ui.launcher.sheets.LocalBottomSheetManager
+ import de.mm20.launcher2.ui.launcher.transitions.EnterHomeTransition
+ import de.mm20.launcher2.ui.launcher.transitions.EnterHomeTransitionManager
++import de.mm20.launcher2.ui.launcher.transitions.IconSnapshot
+ import de.mm20.launcher2.ui.launcher.transitions.LocalEnterHomeTransitionManager
+ import de.mm20.launcher2.ui.locals.LocalDarkTheme
+ import de.mm20.launcher2.ui.locals.LocalPreferDarkContentOverWallpaper
+@@ -432,6 +434,18 @@ abstract class SharedLauncherActivity(
+                             )
+                             enterTransition?.let {
+                                 if (it.startBounds == null || it.targetBounds == null) return@let
++                                val onIconSnapshot = it.onIconSnapshot
++                                if (onIconSnapshot != null) {
++                                    key(onIconSnapshot) {
++                                        IconSnapshot(
++                                            size = it.targetBounds.size,
++                                            onSnapshot = onIconSnapshot,
++                                        ) {
++                                            it.icon?.invoke(IntOffset.Zero) { 1f }
++                                        }
++                                    }
++                                    return@let
++                                }
+                                 val dX = it.startBounds.center.x - it.targetBounds.center.x
+                                 val dY = it.startBounds.center.y - it.targetBounds.center.y
+                                 val s =
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
+index da051bd..17ace5c 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/search/common/grid/GridItem.kt
+@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.alpha
+ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+ import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.layout.boundsInWindow
+@@ -75,6 +76,7 @@ import de.mm20.launcher2.ui.launcher.search.website.WebsiteItemGridPopup
+ import de.mm20.launcher2.ui.launcher.search.wikipedia.ArticleItemGridPopup
+ import de.mm20.launcher2.ui.launcher.transitions.EnterHomeTransitionParams
+ import de.mm20.launcher2.ui.launcher.transitions.HandleEnterHomeTransition
++import de.mm20.launcher2.ui.launcher.transitions.LocalEnterHomeTransitionManager
+ import de.mm20.launcher2.ui.locals.LocalGridSettings
+ import de.mm20.launcher2.ui.locals.LocalWindowSize
+ import de.mm20.launcher2.ui.overlays.Overlay
+@@ -133,6 +135,8 @@ fun GridItem(
+ 
+ 
+         val windowSize = LocalWindowSize.current
++        val hiddenBounds = LocalEnterHomeTransitionManager.current?.hiddenBounds
++        val hiddenByTransition = hiddenBounds != null && hiddenBounds == bounds
+ 
+         if (item is Application) {
+             HandleEnterHomeTransition {
+@@ -175,7 +179,8 @@ fun GridItem(
+                         bounds = it
+                             .boundsInWindow()
+                             .roundToIntRect()
+-                    } then
++                    }
++                    .alpha(if (hiddenByTransition) 0f else 1f) then
+                         if (highlight) Modifier.background(
+                             MaterialTheme.colorScheme.surface,
+                             iconShape
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransition.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransition.kt
+index ab9c897..c61c551 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransition.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransition.kt
+@@ -1,5 +1,6 @@
+ package de.mm20.launcher2.ui.launcher.transitions
+ 
++import android.graphics.Bitmap
+ import androidx.compose.runtime.Composable
+ import androidx.compose.ui.geometry.Offset
+ import androidx.compose.ui.geometry.Rect
+@@ -9,5 +10,10 @@ import androidx.compose.ui.unit.IntRect
+ data class EnterHomeTransition(
+     val startBounds: IntRect? = null,
+     val targetBounds: IntRect? = null,
+-    val icon: (@Composable (animVector: IntOffset, progress: () -> Float) -> Unit)? = null
++    val icon: (@Composable (animVector: IntOffset, progress: () -> Float) -> Unit)? = null,
++    /**
++     * Set when the system animates the icon: [icon] is then not drawn by the launcher but
++     * rendered into a bitmap that is passed to this callback.
++     */
++    val onIconSnapshot: ((Bitmap) -> Unit)? = null,
+ )
+\ No newline at end of file
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
+index 13c3a54..fe7cbe4 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/EnterHomeTransitionManager.kt
+@@ -1,13 +1,20 @@
+ package de.mm20.launcher2.ui.launcher.transitions
+ 
++import android.graphics.Bitmap
++import android.os.Build
++import android.util.Log
+ import android.view.Window
+ import androidx.compose.runtime.compositionLocalOf
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.setValue
+ import androidx.compose.ui.graphics.toAndroidRect
+ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.IntRect
+ import androidx.compose.ui.unit.IntSize
+ import androidx.core.graphics.toRectF
+ import com.android.launcher3.GestureNavContract
++import de.mm20.launcher2.ktx.isAtLeastApiLevel
+ import de.mm20.launcher2.ui.launcher.scaffold.ScaffoldPage
+ import kotlinx.coroutines.flow.MutableSharedFlow
+ 
+@@ -18,6 +25,15 @@ class EnterHomeTransitionManager {
+     private val homeHandlers = mutableSetOf<EnterHomeTransitionHandler>()
+     private val secondaryHandlers = mutableSetOf<EnterHomeTransitionHandler>()
+ 
++    private var iconSurface: GestureNavIconSurface? = null
++
++    /**
++     * Bounds of the icon that is shown on the icon surface right now. The launcher's own icon
++     * at these bounds is hidden meanwhile, so that the icon is not seen twice.
++     */
++    var hiddenBounds by mutableStateOf<IntRect?>(null)
++        private set
++
+     fun resolve(gestureNavContract: GestureNavContract, window: Window, page: ScaffoldPage) {
+         val handlers = if (page === ScaffoldPage.Secondary) secondaryHandlers else homeHandlers
+ 
+@@ -29,12 +45,21 @@ class EnterHomeTransitionManager {
+                     IntSize(window.decorView.width, window.decorView.height)
+                 )
+                 val targetBounds = result.targetBounds
+-                gestureNavContract.sendEndPosition(targetBounds.toAndroidRect().toRectF())
++                // Preferably the system animates the icon on a surface that it moves along with
++                // the app window. Without it, only the position is sent and the launcher
++                // animates the icon on its own.
++                val surface = if (result.icon != null) {
++                    showIconSurface(window, gestureNavContract, targetBounds)
++                } else null
++                if (surface == null) {
++                    gestureNavContract.sendEndPosition(targetBounds.toAndroidRect().toRectF())
++                }
+                 currentTransition.tryEmit(
+                     EnterHomeTransition(
+                         startBounds = startRect,
+                         icon = result.icon,
+                         targetBounds = targetBounds,
++                        onIconSnapshot = surface?.let { s -> { bitmap: Bitmap -> s.setIcon(bitmap) } },
+                     )
+                 )
+                 return
+@@ -44,9 +69,25 @@ class EnterHomeTransitionManager {
+     }
+ 
+     fun clear() {
++        iconSurface?.close()
+         currentTransition.tryEmit(null)
+     }
+ 
++    private fun showIconSurface(
++        window: Window,
++        gestureNavContract: GestureNavContract,
++        bounds: IntRect,
++    ): GestureNavIconSurface? {
++        if (!isAtLeastApiLevel(Build.VERSION_CODES.R) || bounds.isEmpty) return null
++        return try {
++            val surface = iconSurface ?: GestureNavIconSurface(window) { hiddenBounds = it }.also { iconSurface = it }
++            if (surface.show(gestureNavContract, bounds)) surface else null
++        } catch (e: Exception) {
++            Log.e("EnterHomeTransition", "Cannot show the icon surface", e)
++            null
++        }
++    }
++
+     /**
+      * The scaffold page that needs to be active for this handler to be considered.
+      */
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt
+new file mode 100644
+index 0000000..309964e
+--- /dev/null
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/GestureNavIconSurface.kt
+@@ -0,0 +1,166 @@
++package de.mm20.launcher2.ui.launcher.transitions
++
++import android.graphics.Bitmap
++import android.graphics.Paint
++import android.graphics.PixelFormat
++import android.graphics.PorterDuff
++import android.graphics.RectF
++import android.os.Handler
++import android.os.Looper
++import android.os.Message
++import android.os.Messenger
++import android.util.Log
++import android.view.SurfaceControl
++import android.view.SurfaceHolder
++import android.view.SurfaceView
++import android.view.ViewGroup
++import android.view.Window
++import android.widget.FrameLayout
++import androidx.compose.ui.graphics.toAndroidRect
++import androidx.compose.ui.unit.IntRect
++import com.android.launcher3.GestureNavContract
++
++/**
++ * The icon that the system animates to when swiping home. Like the Launcher3 does, the icon is
++ * drawn on a surface of its own. This surface is handed over to the system, which moves it
++ * together with the window of the app that is closing. That way, the icon and the window stay in
++ * sync, which they can not if both are animated independently.
++ *
++ * The system tells us when its animation is done, and the surface is removed again.
++ */
++internal class GestureNavIconSurface(
++    private val window: Window,
++    /**
++     * Called with the bounds of the icon once it is on the surface, and with null when the
++     * surface is gone. The launcher hides its own icon in between.
++     */
++    private val onIconVisible: (IntRect?) -> Unit,
++) : SurfaceHolder.Callback {
++
++    private val handler = Handler(Looper.getMainLooper())
++
++    private val finishMessenger = Messenger(Handler(Looper.getMainLooper()) { message ->
++        if (message.what == MSG_FINISHED) {
++            close()
++            true
++        } else false
++    })
++
++    private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
++    private val closeRunnable = Runnable { close() }
++
++    private var contract: GestureNavContract? = null
++    private var surfaceView: SurfaceView? = null
++    private var bounds = IntRect.Zero
++    private var position = RectF()
++    private var icon: Bitmap? = null
++    private var iconDrawn = false
++
++    /**
++     * Shows the surface at [bounds] and tells the system about it.
++     * @return false if the surface could not be shown. Nothing has been sent in that case.
++     */
++    fun show(contract: GestureNavContract, bounds: IntRect): Boolean {
++        close()
++
++        val parent = window.findViewById<ViewGroup>(android.R.id.content) ?: return false
++        val view = SurfaceView(window.context).apply {
++            setZOrderOnTop(true)
++            holder.setFormat(PixelFormat.TRANSLUCENT)
++            holder.addCallback(this@GestureNavIconSurface)
++        }
++        parent.addView(
++            view,
++            FrameLayout.LayoutParams(bounds.width, bounds.height).apply {
++                leftMargin = bounds.left
++                topMargin = bounds.top
++            }
++        )
++
++        this.contract = contract
++        this.bounds = bounds
++        iconDrawn = false
++        surfaceView = view
++        position = RectF(bounds.toAndroidRect())
++
++        // The position is known right away, the surface only later (surfaceCreated).
++        sendInfo(null)
++        // Safety net in case the system never reports the end of its animation.
++        handler.postDelayed(closeRunnable, TIMEOUT_MS)
++        return true
++    }
++
++    /**
++     * Sets the bitmap that is drawn on the surface.
++     */
++    fun setIcon(bitmap: Bitmap) {
++        icon = bitmap
++        draw()
++    }
++
++    fun close() {
++        handler.removeCallbacks(closeRunnable)
++        contract = null
++        icon = null
++        iconDrawn = false
++        onIconVisible(null)
++        val view = surfaceView ?: return
++        surfaceView = null
++        view.holder.removeCallback(this)
++        // One frame later, so that the icon of the launcher itself is on screen before this one is gone.
++        handler.postDelayed({ (view.parent as? ViewGroup)?.removeView(view) }, 16L)
++    }
++
++    private fun sendInfo(surfaceControl: SurfaceControl?) {
++        val finishCallback = Message.obtain().apply {
++            what = MSG_FINISHED
++            replyTo = finishMessenger
++        }
++        contract?.sendEndPosition(position, surfaceControl, finishCallback)
++    }
++
++    override fun surfaceCreated(holder: SurfaceHolder) {
++        draw()
++        val view = surfaceView ?: return
++        val surfaceControl = view.surfaceControl
++        if (surfaceControl.isValid) sendInfo(surfaceControl)
++    }
++
++    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
++        draw()
++    }
++
++    override fun surfaceDestroyed(holder: SurfaceHolder) {}
++
++    private fun draw() {
++        val holder = surfaceView?.holder ?: return
++        val bitmap = icon ?: return
++        if (!holder.surface.isValid) return
++        try {
++            val canvas = holder.lockHardwareCanvas() ?: return
++            try {
++                canvas.drawColor(0, PorterDuff.Mode.CLEAR)
++                canvas.drawBitmap(
++                    bitmap,
++                    null,
++                    RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat()),
++                    paint
++                )
++            } finally {
++                holder.unlockCanvasAndPost(canvas)
++            }
++            if (!iconDrawn) {
++                iconDrawn = true
++                onIconVisible(bounds)
++            }
++        } catch (e: Exception) {
++            Log.e(TAG, "Cannot draw the icon", e)
++        }
++    }
++
++    private companion object {
++        const val TAG = "GestureNavIconSurface"
++        const val MSG_FINISHED = 0
++        const val TIMEOUT_MS = 2000L
++    }
++}
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt
+new file mode 100644
+index 0000000..2b0c14e
+--- /dev/null
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/transitions/IconSnapshot.kt
+@@ -0,0 +1,55 @@
++package de.mm20.launcher2.ui.launcher.transitions
++
++import android.graphics.Bitmap
++import android.util.Log
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.size
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.withFrameNanos
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.drawWithContent
++import androidx.compose.ui.graphics.asAndroidBitmap
++import androidx.compose.ui.graphics.rememberGraphicsLayer
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.unit.IntSize
++import kotlinx.coroutines.CancellationException
++
++/**
++ * Composes [content] without showing it, and passes a bitmap of it to [onSnapshot].
++ */
++@Composable
++internal fun IconSnapshot(
++    size: IntSize,
++    onSnapshot: (Bitmap) -> Unit,
++    content: @Composable () -> Unit,
++) {
++    val density = LocalDensity.current
++    val layer = rememberGraphicsLayer()
++    Box(
++        modifier = Modifier
++            .size(
++                with(density) { size.width.toDp() },
++                with(density) { size.height.toDp() },
++            )
++            .drawWithContent {
++                // Record the content, but do not draw it.
++                layer.record { this@drawWithContent.drawContent() }
++            },
++        contentAlignment = Alignment.Center,
++    ) {
++        content()
++    }
++    LaunchedEffect(layer) {
++        // Give the content a few frames to be composed, laid out and recorded.
++        repeat(3) { withFrameNanos { } }
++        try {
++            onSnapshot(layer.toImageBitmap().asAndroidBitmap())
++        } catch (e: CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            Log.e("IconSnapshot", "Cannot render the icon", e)
++        }
++    }
++}
+diff --git a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/widgets/music/MusicWidget.kt b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/widgets/music/MusicWidget.kt
+index 2198e34..35fe700 100644
+--- a/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/widgets/music/MusicWidget.kt
++++ b/app/ui/src/main/java/de/mm20/launcher2/ui/launcher/widgets/music/MusicWidget.kt
+@@ -52,6 +52,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.alpha
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.draw.rotate
+ import androidx.compose.ui.graphics.StrokeCap
+@@ -84,6 +85,7 @@ import de.mm20.launcher2.ui.component.Tooltip
+ import de.mm20.launcher2.ui.ktx.conditional
+ import de.mm20.launcher2.ui.launcher.transitions.EnterHomeTransitionParams
+ import de.mm20.launcher2.ui.launcher.transitions.HandleEnterHomeTransition
++import de.mm20.launcher2.ui.launcher.transitions.LocalEnterHomeTransitionManager
+ import de.mm20.launcher2.ui.locals.LocalWindowSize
+ import de.mm20.launcher2.ui.theme.transparency.transparency
+ import de.mm20.launcher2.widgets.MusicWidget
+@@ -265,13 +267,15 @@ fun MusicWidget(widget: MusicWidget) {
+                         if (art != null) {
+                             val windowSize = LocalWindowSize.current
+                             var bounds by remember { mutableStateOf(IntRect.Zero) }
++                            val hiddenBounds = LocalEnterHomeTransitionManager.current?.hiddenBounds
+                             Image(
+                                 bitmap = art.asImageBitmap(),
+                                 modifier = Modifier
+                                     .fillMaxSize()
+                                     .onGloballyPositioned {
+                                         bounds = it.boundsInWindow().roundToIntRect()
+-                                    },
++                                    }
++                                    .alpha(if (hiddenBounds != null && hiddenBounds == bounds) 0f else 1f),
+                                 contentDescription = null,
+                                 contentScale = ContentScale.Crop
+                             )
+diff --git a/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt b/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt
+index 7a4f48a..eb6be55 100644
+--- a/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt
++++ b/core/base/src/main/java/com/android/launcher3/GestureNavContract.kt
+@@ -33,13 +33,24 @@ class GestureNavContract(
+     private val mCallback: Message
+ ) {
+     /**
+-     * Sends the position information to the receiver
++     * Sends the position information to the receiver.
++     * @param surfaceControl A surface showing the icon. The receiver moves it along with the
++     * window that animates to [position].
++     * @param onFinishCallback A message that the receiver sends back when its animation is
++     * done and the surface is no longer needed.
+      */
+     @TargetApi(Build.VERSION_CODES.R)
+-    fun sendEndPosition(position: RectF? = null, surfaceControl: SurfaceControl? = null) {
++    fun sendEndPosition(
++        position: RectF? = null,
++        surfaceControl: SurfaceControl? = null,
++        onFinishCallback: Message? = null,
++    ) {
+         val result = Bundle()
+         result.putParcelable(EXTRA_ICON_POSITION, position)
+         result.putParcelable(EXTRA_ICON_SURFACE, surfaceControl)
++        if (onFinishCallback != null) {
++            result.putParcelable(EXTRA_ON_FINISH_CALLBACK, onFinishCallback)
++        }
+         val callback = Message.obtain()
+         callback.copyFrom(mCallback)
+         callback.data = result
+@@ -56,6 +67,7 @@ class GestureNavContract(
+         const val EXTRA_ICON_POSITION = "gesture_nav_contract_icon_position"
+         const val EXTRA_ICON_SURFACE = "gesture_nav_contract_surface_control"
+         const val EXTRA_REMOTE_CALLBACK = "android.intent.extra.REMOTE_CALLBACK"
++        const val EXTRA_ON_FINISH_CALLBACK = "gesture_nav_contract_finish_callback"
+ 
+         /**
+          * Clears and returns the GestureNavContract if it was present in the intent.
